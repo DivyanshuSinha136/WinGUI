@@ -1,5 +1,11 @@
 """
-wingui.py — Python ctypes interface for wingui32.asm
+WinGUI — Native Win32 GUI framework
+Copyright (C) 2026 Divyanshu Sinha
+
+Licensed under GNU LGPL v3.0
+=============================
+
+wingui.py — Python ctypes interface for wingui32.asm v3
 ========================================================
 
 Architecture
@@ -7,7 +13,7 @@ Architecture
 All GUI logic lives in **wingui32.dll**, compiled from NASM x86-64 Assembly.
 This module is a pure ctypes shim — zero GUI logic of its own.
 
-DLL features (transparent to callers):
+v3 DLL features (transparent to callers):
   • UTF-8 strings accepted natively — pass any Python str, no manual encode.
   • Modern UI: Visual Styles (ComCtl32 v6), Segoe UI 10pt font, DPI-aware,
     modern #F3F3F3 background, themed buttons and labels.
@@ -72,6 +78,7 @@ import threading
 import traceback
 from types import TracebackType
 from typing import Callable, Optional
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Platform guard
@@ -85,10 +92,10 @@ if sys.platform != "win32":
 # ---------------------------------------------------------------------------
 # Metadata
 # ---------------------------------------------------------------------------
-__version__ = "1.0.0"
+__version__ = "3.0.0"
 __author__  = "Divyanshu Sinha"
 __email__   = "divyanshu.sinha631@gmail.com"
-__license__ = "LGPL-3+"
+__license__ = "LGPL"
 
 # ---------------------------------------------------------------------------
 # Types
@@ -132,47 +139,29 @@ CommandCallbackType = ctypes.WINFUNCTYPE(
 # ---------------------------------------------------------------------------
 
 def _load_dll(path: Optional[str] = None) -> ctypes.CDLL:
-    """Load wingui32.dll (or legacy wingui2.dll) from *path* or next to this file.
-
-    Parameters
-    ----------
-    path:
-        Explicit path to the DLL.  When *None* the loader searches the
-        directory containing this file for ``wingui32.dll`` then
-        ``wingui2.dll``.
-
-    Returns
-    -------
-    ctypes.CDLL
-
-    Raises
-    ------
-    FileNotFoundError
-        When no DLL is found.
-    OSError
-        When the DLL exists but fails to load (wrong bitness, missing
-        ``gdi32`` / ``comctl32`` dependency, etc.).
-    """
     if path is None:
-        here = os.path.dirname(os.path.abspath(__file__))
-        # Support both the new name (wingui32.dll) and the legacy name (wingui2.dll)
-        for _name in ("wingui32.dll", "wingui2.dll"):
-            _candidate = os.path.join(here, _name)
-            if os.path.isfile(_candidate):
-                path = _candidate
-                break
-        else:
-            raise FileNotFoundError(
-                f"wingui32.dll (or wingui2.dll) not found in '{here}'.\n"
-                "Build it first:\n"
-                "  nasm -f win64 wingui32.asm -o wingui32.obj\n"
-                "  gcc -shared -o wingui32.dll wingui32.obj"
-                " -luser32 -lkernel32 -lgdi32 -lcomctl32"
-            )
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"DLL not found at '{path}'.")
-    return ctypes.CDLL(path)
+        base = Path(__file__).resolve().parent
 
+        candidates = [
+            base / "wingui32.dll",
+            base / "wingui2.dll",
+            base / ".." / "bin" / "wingui32.dll",
+        ]
+
+        for c in candidates:
+            if c.is_file():
+                return ctypes.CDLL(str(c.resolve()))
+
+        raise FileNotFoundError(
+            f"DLL not found.\n"
+            f"Searched:\n" + "\n".join(str(c) for c in candidates)
+        )
+
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"DLL not found at '{p}'")
+
+    return ctypes.CDLL(str(p.resolve()))
 
 # ---------------------------------------------------------------------------
 # Encoding helper

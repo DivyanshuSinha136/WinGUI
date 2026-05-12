@@ -1,164 +1,352 @@
 # WinGUI
 
-**Native Win32 GUI for Python — zero middleware, zero dependencies.**
+**Native Win32 GUI for Python — powered by NASM x86-64 Assembly**
 
-All GUI logic is implemented in NASM x86-64 Assembly (`wingui32.asm`) and compiled to a single DLL (`wingui32.dll`). The Python package is a pure `ctypes` shim: no C extensions, no third-party libraries, no build step on the Python side.
+[![License: LGPL v3](https://img.shields.io/badge/License-LGPL_v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+[![Platform: Windows x64](https://img.shields.io/badge/Platform-Windows%20x64-0078D4?logo=windows)](https://www.microsoft.com/windows)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Assembly: NASM](https://img.shields.io/badge/Assembly-NASM%20x86--64-red)](https://nasm.us)
+
+WinGUI is a zero-dependency Python GUI framework that drives the Win32 API directly from hand-written NASM x86-64 Assembly. There is no Tkinter, no Qt, no Electron — just a thin `ctypes` shim over a compiled DLL.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Installation](#installation)
+  - [Build the DLL](#build-the-dll)
+  - [Install the package](#install-the-package)
+  - [Verify the installation](#verify-the-installation)
+- [Quick Start](#quick-start)
+  - [OOP Style](#oop-style)
+  - [Flat Module API](#flat-module-api)
+  - [Context Manager](#context-manager)
+- [API Reference](#api-reference)
+  - [WinGUI class](#wingui-class)
+  - [Flat API](#flat-api)
+  - [Callback signature](#callback-signature)
+- [Examples](#examples)
+  - [01 — Minimal window](#01--minimal-window)
+  - [02 — Single button](#02--single-button)
+  - [03 — Multiple buttons](#03--multiple-buttons)
+  - [04 — Labels](#04--labels)
+  - [05 — Text input](#05--text-input)
+  - [06 — Multi-field form](#06--multi-field-form)
+  - [07 — Dynamic title](#07--dynamic-title)
+  - [08 — Counter app](#08--counter-app)
+  - [09 — Calculator](#09--calculator)
+  - [10 — Toggle button](#10--toggle-button)
+  - [11 — Live label update](#11--live-label-update)
+  - [12 — Note-taking app](#12--note-taking-app)
+  - [13 — Unicode](#13--unicode)
+  - [14 — Multiple callbacks](#14--multiple-callbacks)
+  - [15 — Notification filtering](#15--notification-filtering)
+  - [16 — Shared state](#16--shared-state)
+  - [17 — Programmatic close](#17--programmatic-close)
+  - [18 — Raw set_callback](#18--raw-set_callback)
+- [Running the Example Gallery](#running-the-example-gallery)
+- [Diagnostics](#diagnostics)
+- [Project Structure](#project-structure)
+- [Build Reference](#build-reference)
+- [Design Notes](#design-notes)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Assembly-native performance** — every pixel drawn by Win32 directly, no framework overhead
-- **Modern UI out of the box** — ComCtl32 v6 Visual Styles, Segoe UI 10pt ClearType, `#F3F3F3` background, per-monitor DPI awareness
-- **Full Unicode support** — pass any Python `str`; the DLL converts UTF-8 → UTF-16LE internally via `MultiByteToWideChar`
-- **Two API styles** — high-level OOP (`WinGUI` class) or flat module-level functions, your choice
-- **Decorator-based event system** — `@gui.on_command(control_id=1)` with optional notification-code filtering
-- **Multiple handlers per control** — register as many callbacks as you need; all fire in registration order
-- **Context manager support** — `with WinGUI() as gui:` frees GDI handles automatically
-- **No Python dependencies** — only the standard library (`ctypes`, `threading`, `traceback`)
+- **Pure Win32** — no third-party GUI runtime required
+- **NASM x86-64 Assembly core** — all GUI logic is in `wingui32.asm`; Python is only a caller
+- **Modern UI out of the box** — ComCtl32 v6 Visual Styles, Segoe UI 10 pt ClearType, DPI-aware, themed `#F3F3F3` background
+- **Full Unicode** — UTF-8 in, UTF-16LE in the DLL via `MultiByteToWideChar`; CJK, Arabic, emoji all work
+- **Zero dependencies** — only Python's standard library (`ctypes`) and the compiled DLL
+- **Two API styles** — OOP (`WinGUI` class) or flat module functions
+- **Context manager** — `with WinGUI() as gui:` frees GDI handles automatically
+- **Decorator-based events** — `@gui.on_command(control_id=1)` with optional notification-code filtering
+- **Multiple handlers per control** — register as many `@on_command` callbacks as you like on the same ID
 
 ---
 
-## Platform
+## Architecture
 
-**Windows x86-64 only.** Importing on any other platform raises `ImportError`.
+```
+Python script
+    │
+    │  ctypes (zero-copy, ABI-safe)
+    ▼
+wingui.py  ─────────────────  pure shim, no GUI logic
+    │
+    │  LoadLibrary / function pointers
+    ▼
+wingui32.dll  (NASM x86-64 Assembly)
+    │
+    │  Win32 API calls (W-variants, UTF-16LE)
+    ▼
+user32.dll · kernel32.dll · gdi32.dll · comctl32.dll
+```
+
+The DLL exposes ten C-callable functions:
+
+| Export | Description |
+|--------|-------------|
+| `create_window` | Register class, init modern UI, `CreateWindowExW` |
+| `show_window` | `ShowWindow` + `UpdateWindow` |
+| `run_message_loop` | `GetMessageW` / `TranslateMessage` / `DispatchMessageW` |
+| `create_button` | `CreateWindowExW("BUTTON")` + `WM_SETFONT` |
+| `create_label` | `CreateWindowExW("STATIC")` + `WM_SETFONT` |
+| `create_textbox` | `CreateWindowExW("EDIT")` + `WM_SETFONT` |
+| `set_window_title` | `SetWindowTextW` on the main window |
+| `show_message_box` | `MessageBoxW` |
+| `close_window` | `DestroyWindow` + `PostQuitMessage(0)` + GDI cleanup |
+| `set_callback` | Install a `WINFUNCTYPE` pointer for `WM_COMMAND` dispatch |
 
 ---
 
 ## Requirements
 
-| Tool | Purpose |
-|---|---|
-| Python 3.10+ | Type hints use `type[X]` syntax |
-| NASM | Assemble `wingui32.asm` → `wingui32.obj` |
-| GCC (MinGW-w64) **or** MSVC | Link `wingui32.obj` → `wingui32.dll` |
+| Component | Minimum version |
+|-----------|----------------|
+| Windows | 10 (1703+) or Windows 11 |
+| Python | 3.10 (64-bit) |
+| NASM | 2.15+ (to rebuild the DLL) |
+| GCC (MinGW-w64) | 12+ **or** MSVC 2019+ (to link) |
 
----
-
-## Building the DLL
-
-The Python package requires `wingui32.dll` (or the legacy `wingui2.dll`) placed in the same directory as `wingui.py`.
-
-### MSYS2 / MinGW-w64
-
-```sh
-nasm -f win64 wingui32.asm -o wingui32.obj
-gcc  -shared -o wingui32.dll wingui32.obj \
-     -luser32 -lkernel32 -lgdi32 -lcomctl32
-```
-
-### MSVC
-
-```bat
-nasm -f win64 wingui32.asm -o wingui32.obj
-link /DLL /OUT:wingui32.dll ^
-     /EXPORT:create_window  /EXPORT:show_window      ^
-     /EXPORT:run_message_loop /EXPORT:create_button  ^
-     /EXPORT:create_label   /EXPORT:create_textbox   ^
-     /EXPORT:set_window_title /EXPORT:show_message_box ^
-     /EXPORT:close_window   /EXPORT:set_callback     ^
-     wingui32.obj user32.lib kernel32.lib gdi32.lib comctl32.lib
-```
-
-Place `wingui32.dll` next to `wingui.py` (or pass an explicit path to `WinGUI(dll_path=...)`).
+> **Important:** Python and the DLL must both be **64-bit**. A 32-bit Python will fail to load `wingui32.dll`.
 
 ---
 
 ## Installation
 
-No PyPI package yet. Clone the repo and use directly:
+### Build the DLL
 
-```sh
-git clone https://github.com/divyanshu-sinha/wingui
-cd wingui
-# Build the DLL (see above), then:
-python example.py
+The pre-built binary lives in `bin/wingui32.dll`. To rebuild from source:
+
+**MSYS2 / MinGW-w64**
+
+```bash
+cd asm
+nasm -f win64 wingui32.asm -o wingui32.obj
+gcc  -shared -o ../bin/wingui32.dll wingui32.obj \
+     -luser32 -lkernel32 -lgdi32 -lcomctl32
+```
+
+Or use the included batch file from the project root:
+
+```bat
+build.bat
+```
+
+**MSVC (Developer Command Prompt)**
+
+```bat
+cd asm
+nasm -f win64 wingui32.asm -o wingui32.obj
+link /DLL /OUT:..\bin\wingui32.dll ^
+     /EXPORT:create_window   /EXPORT:show_window        ^
+     /EXPORT:run_message_loop /EXPORT:create_button     ^
+     /EXPORT:create_label    /EXPORT:create_textbox     ^
+     /EXPORT:set_window_title /EXPORT:show_message_box  ^
+     /EXPORT:close_window    /EXPORT:set_callback       ^
+     wingui32.obj user32.lib kernel32.lib gdi32.lib comctl32.lib
+```
+
+### Install the package
+
+Install in editable mode from the project root:
+
+```bash
+pip install -e .
+```
+
+Or copy the `wingui/` directory and `bin/wingui32.dll` next to your script and use it directly.
+
+### Verify the installation
+
+```bash
+python -m wingui --check
+```
+
+Expected output:
+
+```
+✓  wingui32.dll loaded successfully
+   Path: D:\...\bin\wingui32.dll
 ```
 
 ---
 
 ## Quick Start
 
-### OOP style (recommended)
+### OOP Style
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+with WinGUI() as gui:
+    hwnd = gui.create_window(640, 360, "Hello — 你好 🌍")
+
+    gui.create_label  (hwnd, 20, 20, 300, 22, "Enter your name:")
+    txt = gui.create_textbox(hwnd, 20, 50, 300, 28)
+    gui.create_button (hwnd, 20, 96, 130, 36, "Say Hello", control_id=1)
+    gui.create_button (hwnd, 165, 96, 100, 36, "Quit",      control_id=99)
+
+    @gui.on_command(control_id=1)
+    def on_hello(hwnd, ctrl_id, notif, ctrl_hwnd):
+        name = read(txt) or "stranger"
+        gui.show_message_box(f"Hello, {name}! 👋", "Greeting")
+
+    @gui.on_command(control_id=99)
+    def on_quit(hwnd, ctrl_id, notif, ctrl_hwnd):
+        gui.close_window(hwnd)
+
+    gui.run_message_loop()
+```
+
+### Flat Module API
+
+```python
+import wingui
+
+hwnd = wingui.create_window(480, 200, "Flat API Demo")
+wingui.create_button(hwnd, 20, 60, 120, 35, "Click Me", control_id=1)
+
+@wingui.on_command(control_id=1)
+def on_click(hwnd, ctrl_id, notif, ctrl_hwnd):
+    wingui.show_message_box("It works!", "Info")
+
+wingui.run_message_loop()
+```
+
+### Context Manager
 
 ```python
 from wingui import WinGUI
 
 with WinGUI() as gui:
-    hwnd = gui.create_window(800, 600, "My App — 你好 🌍")
-
-    gui.create_label  (hwnd, 20, 20,  200, 22, "Enter your name:")
-    txt = gui.create_textbox(hwnd, 20, 48,  300, 28)
-    gui.create_button (hwnd, 20, 90,  120, 32, "Say Hello", control_id=1)
+    hwnd = gui.create_window(400, 200, "Context Manager")
+    gui.create_button(hwnd, 150, 80, 100, 35, "Close", control_id=1)
 
     @gui.on_command(control_id=1)
-    def on_hello(hwnd, ctrl_id, notif, ctrl_hwnd):
-        import ctypes
-        buf = ctypes.create_unicode_buffer(256)
-        ctypes.WinDLL("user32").GetWindowTextW(txt, buf, 256)
-        name = buf.value or "stranger"
-        gui.show_message_box(f"Hello, {name}! 👋", "Greeting")
+    def on_close(hwnd, ctrl_id, notif, ctrl_hwnd):
+        gui.close_window(hwnd)
 
     gui.run_message_loop()
-```
-
-### Flat API style
-
-```python
-import wingui
-
-hwnd = wingui.create_window(640, 400, "Flat API")
-wingui.create_button(hwnd, 20, 20, 100, 32, "OK", control_id=1)
-
-@wingui.on_command(control_id=1)
-def on_ok(hwnd, ctrl_id, notif, ctrl_hwnd):
-    wingui.show_message_box("Done!", "Info")
-
-wingui.run_message_loop()
+# __exit__ is called here — font and brush handles are freed automatically
 ```
 
 ---
 
 ## API Reference
 
-### `WinGUI(dll_path=None)`
+### `WinGUI` class
 
-Main class. Accepts an optional explicit path to `wingui32.dll`; when omitted, the DLL is located automatically next to `wingui.py`.
+#### Constructor
+
+```python
+WinGUI(dll_path: str | None = None)
+```
+
+Loads `wingui32.dll`. Pass an explicit path or let the loader search next to `wingui.py` and in `../bin/`.
 
 #### Window lifecycle
 
-| Method | Description |
-|---|---|
-| `create_window(width, height, title) → int` | Create and show the main window. Returns its HWND. Raises `OSError` on failure. |
-| `show_window(hwnd=None)` | Call `ShowWindow` + `UpdateWindow`. Usually unnecessary — `create_window` includes `WS_VISIBLE`. |
-| `run_message_loop(threaded=False)` | Enter the Win32 message pump. Blocks until the window closes. Pass `threaded=True` to run on a daemon thread. |
-| `close_window(hwnd=None)` | Destroy the window (`DestroyWindow` → `PostQuitMessage`). Also frees the font and background brush GDI handles. |
-| `set_window_title(hwnd, title)` | Update the title bar text at runtime. |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `create_window` | `(width, height, title) -> int` | Create and show the main window. Returns HWND. |
+| `show_window` | `(hwnd=None)` | `ShowWindow` + `UpdateWindow`. Usually not needed — `create_window` already shows the window. |
+| `run_message_loop` | `(threaded=False)` | Block on the Win32 message pump until the window closes. |
+| `close_window` | `(hwnd=None)` | `DestroyWindow` → `PostQuitMessage(0)` + GDI cleanup. |
+| `set_window_title` | `(hwnd, title)` | Update the title bar at runtime. |
 
-#### Control factory
+#### Control creation
 
-| Method | Description |
-|---|---|
-| `create_button(parent, x, y, width, height, text, control_id=0) → int` | Themed push-button. Returns HWND. |
-| `create_label(parent, x, y, width, height, text) → int` | Read-only STATIC text control. Returns HWND. |
-| `create_textbox(parent, x, y, width, height) → int` | Editable single-line EDIT control. Returns HWND. Read/write via `user32.GetWindowTextW` / `SetWindowTextW`. |
+All control methods return the child **HWND** as a plain `int`. Pass this value to `user32.GetWindowTextW` / `SetWindowTextW` to read/write content at runtime.
 
-All factory methods raise `OSError` (with the Win32 error code) when `CreateWindowExW` returns `NULL`.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `create_button` | `(parent, x, y, width, height, text, control_id=0) -> int` | Push-button. `control_id` appears as `ctrl_id` in callbacks. |
+| `create_label` | `(parent, x, y, width, height, text) -> int` | Read-only STATIC control. Text colour `#1A1A1A`, background `#F3F3F3`. |
+| `create_textbox` | `(parent, x, y, width, height) -> int` | Single-line EDIT control with `ES_AUTOHSCROLL`. Read/write via Win32 directly. |
 
 #### Dialogs
 
-| Method | Description |
-|---|---|
-| `show_message_box(text, caption="Info") → int` | Show a modal `MessageBoxW`. Returns the IDOK / IDCANCEL code. |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `show_message_box` | `(text, caption="Info") -> int` | Modal `MessageBoxW`. Returns `IDOK=1`, `IDCANCEL=2`, etc. |
 
 #### Event system
 
-| Method | Description |
-|---|---|
-| `on_command(control_id=None, notif=None)` | Decorator factory. Registers a `WM_COMMAND` handler. Both filters are optional (`None` = match any). |
-| `set_callback(fn)` | Install a single raw `WM_COMMAND` hook (replaces the decorator system). |
+```python
+@gui.on_command(control_id=None, notif=None)
+def handler(hwnd, ctrl_id, notif, ctrl_hwnd):
+    ...
+```
 
-**Handler signature:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `control_id` | `int \| None` | Filter to one control. `None` catches all controls. |
+| `notif` | `int \| None` | Filter to one notification code. `BN_CLICKED = 0` for buttons. `None` passes all codes. |
+
+Multiple decorators on the same `control_id` are allowed and called in registration order. A handler that raises an exception does **not** block the others — the traceback is printed and execution continues.
+
+```python
+gui.set_callback(fn)
+```
+
+Lower-level alternative: installs a single raw `WM_COMMAND` handler that receives every event. Using `@on_command` is preferred.
+
+#### Context manager
+
+```python
+with WinGUI() as gui:
+    ...
+```
+
+`__exit__` calls `close_window` and frees the Segoe UI font and background brush GDI handles. Exceptions inside the `with` block are never suppressed.
+
+---
+
+### Flat API
+
+Every method on `WinGUI` has a module-level twin that operates on an implicit singleton instance:
+
+```python
+import wingui
+
+wingui.create_window(width, height, title)
+wingui.show_window(hwnd=None)
+wingui.run_message_loop(threaded=False)
+wingui.create_button(parent, x, y, w, h, text, control_id=0)
+wingui.create_label(parent, x, y, w, h, text)
+wingui.create_textbox(parent, x, y, w, h)
+wingui.set_window_title(hwnd, title)
+wingui.show_message_box(text, caption="Info")
+wingui.close_window(hwnd=None)
+wingui.set_callback(fn)
+wingui.on_command(control_id=None, notif=None)
+```
+
+Reset the singleton between independent uses:
+
+```python
+import wingui as _w
+_w._instance = None
+```
+
+---
+
+### Callback signature
 
 ```python
 def handler(hwnd: int, ctrl_id: int, notif: int, ctrl_hwnd: int) -> None:
@@ -166,468 +354,735 @@ def handler(hwnd: int, ctrl_id: int, notif: int, ctrl_hwnd: int) -> None:
 ```
 
 | Parameter | Description |
-|---|---|
-| `hwnd` | Parent window handle |
-| `ctrl_id` | Control identifier (matches `control_id` passed to `create_button`) |
-| `notif` | Notification code (`BN_CLICKED = 0` for push-buttons) |
-| `ctrl_hwnd` | Child control handle |
+|-----------|-------------|
+| `hwnd` | Parent window HWND |
+| `ctrl_id` | Control identifier (the `control_id` you passed to `create_button`) |
+| `notif` | Notification code — `BN_CLICKED = 0` for button clicks |
+| `ctrl_hwnd` | Child control HWND |
 
-#### Context manager
-
-```python
-with WinGUI() as gui:
-    ...
-# __exit__ runs close_window automatically; GDI handles are freed.
-```
-
----
-
-### Flat module API
-
-Every `WinGUI` method is mirrored as a module-level function backed by a lazily-created singleton:
-
-```python
-import wingui
-
-wingui.create_window(...)
-wingui.create_button(...)
-wingui.create_label(...)
-wingui.create_textbox(...)
-wingui.show_window(...)
-wingui.run_message_loop(...)
-wingui.set_window_title(...)
-wingui.show_message_box(...)
-wingui.close_window(...)
-wingui.set_callback(...)
-wingui.on_command(...)
-```
-
-The singleton is stored at `wingui._instance`. Reset it to `None` between independent runs (e.g. in test suites or example galleries).
-
----
-
-### `CommandCallbackType`
-
-The `ctypes.WINFUNCTYPE` callable type for `WM_COMMAND` callbacks. Useful for type annotations and for passing callbacks to `set_callback` directly.
+The type alias `CommandCallbackType` is exported for annotations:
 
 ```python
 from wingui import CommandCallbackType
 
+def my_handler(hwnd, ctrl_id, notif, ctrl_hwnd) -> None: ...
 cb: CommandCallbackType = CommandCallbackType(my_handler)
 ```
-
-> **Important:** Keep a Python reference to every `CommandCallbackType` object for as long as the window is alive. `ctypes` does not prevent garbage collection, and the DLL would hold a dangling function pointer.
 
 ---
 
 ## Examples
 
-Run the interactive example gallery:
+All 22 examples are runnable via the gallery:
 
-```sh
+```bash
+python -m wingui --examples
+# or
 python example.py
 ```
 
-The gallery includes 22 self-contained demos:
+### Reading and writing control text
 
-| # | Demo |
-|---|---|
-| 01 | Minimal blank window |
-| 02 | Custom size and title |
-| 03 | Single button + message box |
-| 04 | Multiple buttons with unique IDs |
-| 05 | Static text labels |
-| 06 | Text input (EDIT control) |
-| 07 | Multi-field form |
-| 08 | Dynamic window title |
-| 09 | Message box variations |
-| 10 | Counter app (increment / decrement / reset) |
-| 11 | Simple calculator |
-| 12 | Programmatic window close |
-| 13 | Multiple callbacks on one button |
-| 14 | Notification-code filtering |
-| 15 | Flat module API (no class) |
-| 16 | Shared Python state across callbacks |
-| 17 | Toggle button (stateful UI) |
-| 18 | Full Unicode input and display |
-| 19 | Context manager (`with WinGUI() as gui:`) |
-| 20 | Live label update at runtime |
-| 21 | Simple note-taking app |
-| 22 | Raw `set_callback` hook |
-
----
-
-## ctypes Modifications
-
-Because wingui controls are plain Win32 HWNDs, you can reach into `user32`, `gdi32`, and `kernel32` directly via `ctypes` to do anything the DLL doesn't expose natively. All examples below work inside any `@gui.on_command` handler or anywhere after `create_window` returns.
+Most examples use these two small helpers:
 
 ```python
 import ctypes
-import ctypes.wintypes as wt
+_user32 = ctypes.WinDLL("user32")
 
-user32  = ctypes.WinDLL("user32")
-gdi32   = ctypes.WinDLL("gdi32")
-kernel32 = ctypes.WinDLL("kernel32")
+def read(hwnd: int) -> str:
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+def write(hwnd: int, text: str) -> None:
+    _user32.SetWindowTextW(hwnd, text)
 ```
 
 ---
 
-### Reading and writing control text
+### 01 — Minimal window
 
-`create_textbox` and `create_label` both return a raw HWND. Use `GetWindowTextW` / `SetWindowTextW` to read and write their content at any time.
+Open a blank window. The simplest possible WinGUI program.
 
 ```python
-# Read from a textbox or label
-buf = ctypes.create_unicode_buffer(512)
-user32.GetWindowTextW(txt_hwnd, buf, 512)
-value = buf.value           # Python str, full Unicode
+from wingui import WinGUI
 
-# Write to a textbox, label, or button
-user32.SetWindowTextW(txt_hwnd, "Hello, 世界!")
-
-# Clear a textbox
-user32.SetWindowTextW(txt_hwnd, "")
+gui  = WinGUI()
+hwnd = gui.create_window(400, 300, "Minimal Window")
+gui.run_message_loop()
 ```
-
-These are the same calls used throughout `example.py`'s `_read()` / `_write()` helpers.
 
 ---
 
-### Querying control text length
+### 02 — Single button
+
+Click the button to show a message box.
 
 ```python
-# Returns the number of characters (not bytes), excluding the null terminator
-length = user32.GetWindowTextLengthW(ctrl_hwnd)
-buf = ctypes.create_unicode_buffer(length + 1)
-user32.GetWindowTextW(ctrl_hwnd, buf, length + 1)
-text = buf.value
+from wingui import WinGUI
+
+gui  = WinGUI()
+hwnd = gui.create_window(400, 200, "Single Button")
+gui.create_button(hwnd, x=150, y=80, width=100, height=35,
+                  text="Click Me", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_click(hwnd, ctrl_id, notif, ctrl_hwnd):
+    gui.show_message_box("You clicked the button!", "Hello")
+
+gui.run_message_loop()
 ```
 
 ---
 
-### Enabling and disabling controls
+### 03 — Multiple buttons
+
+Three buttons with a single catch-all handler dispatching by `ctrl_id`.
 
 ```python
-# Disable a button (greys it out, ignores clicks)
-user32.EnableWindow(btn_hwnd, False)
+from wingui import WinGUI
 
-# Re-enable it
-user32.EnableWindow(btn_hwnd, True)
+gui  = WinGUI()
+hwnd = gui.create_window(420, 200, "Multiple Buttons")
+
+gui.create_button(hwnd,  20, 80, 110, 35, "Red",   control_id=1)
+gui.create_button(hwnd, 155, 80, 110, 35, "Green", control_id=2)
+gui.create_button(hwnd, 290, 80, 110, 35, "Blue",  control_id=3)
+
+colours = {1: "Red 🔴", 2: "Green 🟢", 3: "Blue 🔵"}
+
+@gui.on_command()   # no control_id → catches ALL buttons
+def on_any(hwnd, ctrl_id, notif, ctrl_hwnd):
+    name = colours.get(ctrl_id, f"Unknown (id={ctrl_id})")
+    gui.show_message_box(f"You chose: {name}", "Colour Picker")
+
+gui.run_message_loop()
 ```
-
-Useful for submit buttons that should only be active when a form is complete.
 
 ---
 
-### Showing and hiding controls
+### 04 — Labels
+
+Six STATIC text labels at various positions.
 
 ```python
-SW_HIDE = 0
-SW_SHOW = 5
+from wingui import WinGUI
 
-user32.ShowWindow(ctrl_hwnd, SW_HIDE)   # hide
-user32.ShowWindow(ctrl_hwnd, SW_SHOW)   # show
+gui  = WinGUI()
+hwnd = gui.create_window(440, 320, "Labels")
+
+gui.create_label(hwnd,  20,  20, 400, 22, "This is a label at the top.")
+gui.create_label(hwnd,  20,  60, 400, 22, "Labels use the Win32 STATIC class.")
+gui.create_label(hwnd,  20, 100, 400, 22, "Rendered with Segoe UI and modern colours.")
+gui.create_label(hwnd,  20, 140, 200, 22, "Left column")
+gui.create_label(hwnd, 230, 140, 190, 22, "Right column")
+gui.create_label(hwnd,  20, 240, 400, 22, "Unicode: 你好 • مرحبا • こんにちは • 🌍")
+
+gui.run_message_loop()
 ```
 
 ---
 
-### Moving and resizing controls at runtime
+### 05 — Text input
 
-`SetWindowPos` repositions and resizes any child control without recreating it.
-
-```python
-SWP_NOZORDER   = 0x0004
-SWP_NOACTIVATE = 0x0010
-
-user32.SetWindowPos(
-    ctrl_hwnd,       # target control
-    0,               # hWndInsertAfter (ignored with SWP_NOZORDER)
-    new_x, new_y,    # new position in client coords
-    new_w, new_h,    # new size
-    SWP_NOZORDER | SWP_NOACTIVATE,
-)
-```
-
----
-
-### Changing a control's font
-
-The DLL sets Segoe UI 10pt on every control at creation time. You can replace it with any GDI font.
-
-```python
-# Create a bold 14pt Segoe UI font
-LOGPIXELSY    = 90
-FW_BOLD       = 700
-DEFAULT_CHARSET = 1
-OUT_DEFAULT_PRECIS = 0
-CLIP_DEFAULT_PRECIS = 0
-CLEARTYPE_QUALITY = 5
-DEFAULT_PITCH = 0
-FF_SWISS      = 32
-
-hfont = gdi32.CreateFontW(
-    -14,              # height (negative = character height in points)
-    0,                # width (0 = auto)
-    0, 0,             # escapement, orientation
-    FW_BOLD,          # weight
-    False, False, False,          # italic, underline, strikeout
-    DEFAULT_CHARSET,
-    OUT_DEFAULT_PRECIS,
-    CLIP_DEFAULT_PRECIS,
-    CLEARTYPE_QUALITY,
-    DEFAULT_PITCH | FF_SWISS,
-    "Segoe UI",
-)
-
-WM_SETFONT = 0x0030
-user32.SendMessageW(ctrl_hwnd, WM_SETFONT, hfont, True)
-
-# Delete the font handle when the window closes to avoid a GDI leak
-gdi32.DeleteObject(hfont)
-```
-
----
-
-### Reading keyboard focus
-
-```python
-focused_hwnd = user32.GetFocus()
-```
-
-Returns the HWND of the control that currently has keyboard focus, or `0` if none (or focus is in another thread/process).
-
----
-
-### Sending a synthetic button click
-
-You can programmatically trigger a button as if the user clicked it:
-
-```python
-BM_CLICK = 0x00F5
-user32.SendMessageW(btn_hwnd, BM_CLICK, 0, 0)
-```
-
-This fires `WM_COMMAND` / `BN_CLICKED` on the parent window, so all registered `@on_command` handlers run normally.
-
----
-
-### Setting an EDIT control's selection
-
-```python
-EM_SETSEL = 0x00B1
-
-# Select all text
-user32.SendMessageW(txt_hwnd, EM_SETSEL, 0, -1)
-
-# Deselect (move caret to end)
-user32.SendMessageW(txt_hwnd, EM_SETSEL, -1, 0)
-
-# Select characters 3–7
-user32.SendMessageW(txt_hwnd, EM_SETSEL, 3, 7)
-```
-
----
-
-### Setting a password mask on a textbox
-
-```python
-EM_SETPASSWORDCHAR = 0x00CC
-
-# Show bullets instead of characters
-user32.SendMessageW(txt_hwnd, EM_SETPASSWORDCHAR, ord("•"), 0)
-
-# Force a repaint so the mask takes effect immediately
-user32.InvalidateRect(txt_hwnd, None, True)
-
-# Remove the mask
-user32.SendMessageW(txt_hwnd, EM_SETPASSWORDCHAR, 0, 0)
-user32.InvalidateRect(txt_hwnd, None, True)
-```
-
----
-
-### Limiting input length on a textbox
-
-```python
-EM_SETLIMITTEXT = 0x00C5
-
-# Allow at most 32 characters
-user32.SendMessageW(txt_hwnd, EM_SETLIMITTEXT, 32, 0)
-```
-
----
-
-### Getting and setting the window rectangle
-
-```python
-class RECT(ctypes.Structure):
-    _fields_ = [
-        ("left",   ctypes.c_long),
-        ("top",    ctypes.c_long),
-        ("right",  ctypes.c_long),
-        ("bottom", ctypes.c_long),
-    ]
-
-rect = RECT()
-
-# Screen coordinates of the window frame
-user32.GetWindowRect(hwnd, ctypes.byref(rect))
-print(rect.left, rect.top, rect.right, rect.bottom)
-
-# Client area size (excludes title bar and borders)
-user32.GetClientRect(hwnd, ctypes.byref(rect))
-print(f"Client area: {rect.right} × {rect.bottom}")
-```
-
----
-
-### Centering the window on screen
-
-```python
-SM_CXSCREEN = 0
-SM_CYSCREEN = 1
-
-screen_w = user32.GetSystemMetrics(SM_CXSCREEN)
-screen_h = user32.GetSystemMetrics(SM_CYSCREEN)
-
-rect = RECT()
-user32.GetWindowRect(hwnd, ctypes.byref(rect))
-win_w = rect.right  - rect.left
-win_h = rect.bottom - rect.top
-
-x = (screen_w - win_w) // 2
-y = (screen_h - win_h) // 2
-
-SWP_NOSIZE     = 0x0001
-SWP_NOZORDER   = 0x0004
-SWP_NOACTIVATE = 0x0010
-
-user32.SetWindowPos(hwnd, 0, x, y, 0, 0,
-                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
-```
-
----
-
-### Flashing the taskbar button
-
-```python
-class FLASHWINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize",    ctypes.c_uint),
-        ("hwnd",      ctypes.c_size_t),
-        ("dwFlags",   ctypes.c_uint),
-        ("uCount",    ctypes.c_uint),
-        ("dwTimeout", ctypes.c_uint),
-    ]
-
-FLASHW_ALL        = 0x00000003
-FLASHW_TIMERNOFG  = 0x0000000C
-
-fwi = FLASHWINFO(
-    cbSize   = ctypes.sizeof(FLASHWINFO),
-    hwnd     = hwnd,
-    dwFlags  = FLASHW_ALL | FLASHW_TIMERNOFG,
-    uCount   = 5,       # flash 5 times
-    dwTimeout= 0,       # default cursor blink rate
-)
-user32.FlashWindowEx(ctypes.byref(fwi))
-```
-
----
-
-### Putting it all together — a live character counter
+Read from an EDIT control when Submit is clicked.
 
 ```python
 from wingui import WinGUI
 import ctypes
 
-user32 = ctypes.WinDLL("user32")
+_user32 = ctypes.WinDLL("user32")
 
-with WinGUI() as gui:
-    hwnd = gui.create_window(460, 200, "Character Counter")
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
 
-    gui.create_label(hwnd, 20, 20, 200, 22, "Type below (max 50 chars):")
-    txt = gui.create_textbox(hwnd, 20, 48, 420, 28)
-    lbl = gui.create_label(hwnd, 20, 90, 420, 22, "0 / 50 characters")
-    gui.create_button(hwnd, 175, 130, 110, 35, "Submit", control_id=1)
+gui  = WinGUI()
+hwnd = gui.create_window(440, 220, "Text Input")
 
-    # Limit input to 50 characters
-    EM_SETLIMITTEXT = 0x00C5
-    user32.SendMessageW(txt, EM_SETLIMITTEXT, 50, 0)
+gui.create_label  (hwnd,  20,  20, 400, 22, "Type something and press Submit:")
+txt = gui.create_textbox(hwnd, 20,  50, 400, 28)
+gui.create_button (hwnd, 160,  96, 110, 35, "Submit", control_id=1)
 
-    @gui.on_command(control_id=1)
-    def on_submit(hwnd, ctrl_id, notif, ctrl_hwnd):
-        buf = ctypes.create_unicode_buffer(512)
-        user32.GetWindowTextW(txt, buf, 512)
-        text = buf.value
-        n = len(text)
-        user32.SetWindowTextW(lbl, f"{n} / 50 characters")
-        gui.show_message_box(f'Submitted ({n} chars):\n\n"{text}"', "Done")
+@gui.on_command(control_id=1)
+def on_submit(hwnd, ctrl_id, notif, ctrl_hwnd):
+    text = read(txt)
+    if text:
+        gui.show_message_box(f'You typed:\n\n"{text}"', "Input Received")
+    else:
+        gui.show_message_box("The text box is empty!", "Notice")
 
-    gui.run_message_loop()
+gui.run_message_loop()
 ```
 
 ---
 
-## Architecture
+### 06 — Multi-field form
 
+Name / Last Name / Email form — Submit prints all values.
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+gui  = WinGUI()
+hwnd = gui.create_window(480, 320, "Simple Form")
+
+fields = [("First Name:", 30), ("Last Name:", 90), ("Email:", 150)]
+textboxes = []
+
+for label_text, y in fields:
+    gui.create_label  (hwnd,  20, y,      130, 22, label_text)
+    tb = gui.create_textbox(hwnd, 160, y+2, 300, 26)
+    textboxes.append(tb)
+
+gui.create_button(hwnd, 180, 230, 120, 35, "Submit", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_submit(hwnd, ctrl_id, notif, ctrl_hwnd):
+    first, last, email = [read(tb) for tb in textboxes]
+    msg = (
+        f"First Name : {first  or '(empty)'}\n"
+        f"Last Name  : {last   or '(empty)'}\n"
+        f"Email      : {email  or '(empty)'}"
+    )
+    gui.show_message_box(msg, "Form Data")
+
+gui.run_message_loop()
 ```
-wingui32.asm          NASM x86-64 Assembly source
-    │
-    │  nasm + gcc/link
-    ▼
-wingui32.dll          Native Win32 DLL (all GUI logic)
-    │
-    │  ctypes shim (wingui.py)
-    ▼
-WinGUI / flat API     Python interface
-```
-
-The DLL performs one-time initialisation on the first `create_window` call:
-
-- `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` — loaded via `GetProcAddress` for compatibility with Windows < 1703
-- `InitCommonControlsEx(ICC_STANDARD_CLASSES)` — enables ComCtl32 v6 visual styles
-- `CreateFontW("Segoe UI", -13, ClearType)` — sent to every control via `WM_SETFONT`
-- `CreateSolidBrush(0x00F3F3F3)` — window background
-
-All string parameters flow as UTF-8 `const char*` into the DLL, which converts them to UTF-16LE via `MultiByteToWideChar(CP_UTF8)` before any Win32 Wide-API call. Full Unicode — emoji, CJK, Arabic, RTL scripts — is supported end-to-end.
-
-HWND values are typed as `c_size_t` (not `c_void_p`) to ensure ctypes always returns a plain `int`. `c_void_p` returns `None` for a zero handle, which breaks validity checks; `c_size_t` returns `0`, which is unambiguous.
 
 ---
 
-## Troubleshooting
+### 07 — Dynamic title
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `FileNotFoundError: wingui32.dll not found` | DLL not built yet | Run the NASM + GCC build commands above |
-| `OSError: create_window failed — Win32 error 1400` | Invalid HWND | Rebuild the DLL; ensure `-lgdi32 -lcomctl32` are linked |
-| `OSError: create_label failed — Win32 error 1407` | Wrong `hInstance` in DLL | Use the v3.3 source; earlier versions passed the DLL handle for system control classes |
-| Window appears but controls are invisible | ComCtl32 v6 not activated | Ensure the DLL links `-lcomctl32` and calls `InitCommonControlsEx` |
-| Crash after closing window | Callback GC'd prematurely | Store every `CommandCallbackType` object on a Python variable with window lifetime |
-| `ImportError` on non-Windows | Expected | wingui is Windows-only |
+Each click appends the click count to the title bar.
+
+```python
+from wingui import WinGUI
+
+gui   = WinGUI()
+hwnd  = gui.create_window(420, 200, "Click to update title")
+count = [0]
+
+gui.create_label (hwnd, 20, 20, 380, 22, "Each click updates the title bar.")
+gui.create_button(hwnd, 155, 80, 110, 35, "Click", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_click(hwnd, ctrl_id, notif, ctrl_hwnd):
+    count[0] += 1
+    gui.set_window_title(hwnd, f"Clicked {count[0]} time(s)")
+
+gui.run_message_loop()
+```
+
+---
+
+### 08 — Counter app
+
+Increment, decrement, and reset — result shown in the title bar.
+
+```python
+from wingui import WinGUI
+
+gui     = WinGUI()
+hwnd    = gui.create_window(420, 200, "Counter: 0")
+counter = [0]
+
+gui.create_label (hwnd,  20, 20, 380, 22, "Use the buttons to change the counter.")
+gui.create_button(hwnd,  20, 80, 110, 35, "− Decrement", control_id=1)
+gui.create_button(hwnd, 155, 80, 110, 35, "Reset",       control_id=2)
+gui.create_button(hwnd, 290, 80, 110, 35, "+ Increment", control_id=3)
+
+def refresh():
+    gui.set_window_title(hwnd, f"Counter: {counter[0]}")
+
+@gui.on_command(control_id=1)
+def on_dec(hwnd, ctrl_id, notif, ctrl_hwnd):
+    counter[0] -= 1; refresh()
+
+@gui.on_command(control_id=2)
+def on_reset(hwnd, ctrl_id, notif, ctrl_hwnd):
+    counter[0] = 0; refresh()
+
+@gui.on_command(control_id=3)
+def on_inc(hwnd, ctrl_id, notif, ctrl_hwnd):
+    counter[0] += 1; refresh()
+
+gui.run_message_loop()
+```
+
+---
+
+### 09 — Calculator
+
+Two number inputs, four operator buttons, result in a textbox.
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+def write(hwnd, text):
+    _user32.SetWindowTextW(hwnd, text)
+
+gui  = WinGUI()
+hwnd = gui.create_window(480, 260, "Calculator")
+
+gui.create_label(hwnd,  20, 20,  70, 22, "Number A:")
+tb_a = gui.create_textbox(hwnd,  95, 20, 120, 26)
+
+gui.create_label(hwnd, 250, 20,  70, 22, "Number B:")
+tb_b = gui.create_textbox(hwnd, 325, 20, 120, 26)
+
+for i, (sym, cid) in enumerate([("+", 1), ("−", 2), ("×", 3), ("÷", 4)]):
+    gui.create_button(hwnd, 20 + i * 110, 68, 95, 35, sym, control_id=cid)
+
+gui.create_label(hwnd,  20, 130, 70, 22, "Result:")
+tb_result = gui.create_textbox(hwnd, 95, 130, 350, 26)
+
+@gui.on_command()
+def on_op(hwnd, ctrl_id, notif, ctrl_hwnd):
+    if ctrl_id not in (1, 2, 3, 4):
+        return
+    try:
+        a, b = float(read(tb_a)), float(read(tb_b))
+    except ValueError:
+        write(tb_result, "Error: enter valid numbers"); return
+
+    if   ctrl_id == 1: result = a + b
+    elif ctrl_id == 2: result = a - b
+    elif ctrl_id == 3: result = a * b
+    elif ctrl_id == 4:
+        if b == 0: write(tb_result, "Error: division by zero"); return
+        else: result = a / b
+
+    write(tb_result, str(int(result)) if result == int(result) else f"{result:.6g}")
+
+gui.run_message_loop()
+```
+
+---
+
+### 10 — Toggle button
+
+Button label flips between OFF and ON ✓ on each click.
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+gui   = WinGUI()
+hwnd  = gui.create_window(320, 180, "Toggle")
+state = [False]
+
+gui.create_label(hwnd, 20, 20, 280, 22, "Toggle the button on and off:")
+btn = gui.create_button(hwnd, 95, 80, 130, 35, "OFF", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_toggle(hwnd, ctrl_id, notif, ctrl_hwnd):
+    state[0] = not state[0]
+    label = "ON  ✓" if state[0] else "OFF"
+    _user32.SetWindowTextW(btn, label)
+    gui.set_window_title(hwnd, f"Toggle ({label.strip()})")
+
+gui.run_message_loop()
+```
+
+---
+
+### 11 — Live label update
+
+Update a label's text at runtime from a textbox.
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+gui  = WinGUI()
+hwnd = gui.create_window(480, 240, "Live Label Update")
+
+gui.create_label(hwnd, 20, 20, 440, 22, "Type text and press Update:")
+txt = gui.create_textbox(hwnd, 20, 50, 440, 28)
+lbl = gui.create_label(hwnd, 20, 100, 440, 22, "(nothing yet)")
+gui.create_button(hwnd, 175, 148, 130, 35, "Update Label", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_update(hwnd, ctrl_id, notif, ctrl_hwnd):
+    text = read(txt) or "(empty)"
+    _user32.SetWindowTextW(lbl, text)
+
+gui.run_message_loop()
+```
+
+---
+
+### 12 — Note-taking app
+
+Add, view, clear, and count notes — status label updates after each action.
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+gui   = WinGUI()
+hwnd  = gui.create_window(500, 300, "Note Taker")
+notes = []
+
+gui.create_label(hwnd, 20, 20, 460, 22, "Enter a note:")
+txt    = gui.create_textbox(hwnd, 20, 48, 460, 28)
+status = gui.create_label  (hwnd, 20, 174, 460, 22, "No notes yet.")
+
+gui.create_button(hwnd,  20, 92, 110, 32, "Add Note",   control_id=1)
+gui.create_button(hwnd, 145, 92, 110, 32, "Show Notes", control_id=2)
+gui.create_button(hwnd, 270, 92, 110, 32, "Clear All",  control_id=3)
+gui.create_button(hwnd, 395, 92,  85, 32, "Count",      control_id=4)
+
+@gui.on_command(control_id=1)
+def on_add(hwnd, ctrl_id, notif, ctrl_hwnd):
+    note = read(txt).strip()
+    if note:
+        notes.append(note)
+        _user32.SetWindowTextW(txt, "")
+        _user32.SetWindowTextW(status, f"{len(notes)} note(s) saved.")
+
+@gui.on_command(control_id=2)
+def on_show(hwnd, ctrl_id, notif, ctrl_hwnd):
+    body = "\n".join(f"{i+1}. {n}" for i, n in enumerate(notes)) if notes else "No notes added yet."
+    gui.show_message_box(body, f"Notes ({len(notes)})")
+
+@gui.on_command(control_id=3)
+def on_clear(hwnd, ctrl_id, notif, ctrl_hwnd):
+    notes.clear()
+    _user32.SetWindowTextW(status, "All notes cleared.")
+
+@gui.on_command(control_id=4)
+def on_count(hwnd, ctrl_id, notif, ctrl_hwnd):
+    gui.show_message_box(f"You have {len(notes)} note(s).", "Count")
+
+gui.run_message_loop()
+```
+
+---
+
+### 13 — Unicode
+
+Full Unicode in labels, textboxes, and message boxes.
+
+```python
+from wingui import WinGUI
+
+gui  = WinGUI()
+hwnd = gui.create_window(520, 320, "Unicode  🌍")
+
+gui.create_label(hwnd, 20,  20, 480, 22, "Chinese:  你好，世界！")
+gui.create_label(hwnd, 20,  52, 480, 22, "Arabic:   مرحبا بالعالم")
+gui.create_label(hwnd, 20,  84, 480, 22, "Japanese: こんにちは世界")
+gui.create_label(hwnd, 20, 116, 480, 22, "Emoji:    🎉 🚀 🌟 🎨 🏆")
+gui.create_label(hwnd, 20, 160, 480, 22, "Type any Unicode text below:")
+
+txt = gui.create_textbox(hwnd, 20, 188, 480, 28)
+gui.create_button(hwnd, 195, 232, 130, 35, "Show Text", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_show(hwnd, ctrl_id, notif, ctrl_hwnd):
+    import ctypes
+    buf = ctypes.create_unicode_buffer(512)
+    ctypes.WinDLL("user32").GetWindowTextW(txt, buf, 512)
+    gui.show_message_box(buf.value or "(empty)", "Your Input")
+
+gui.run_message_loop()
+```
+
+---
+
+### 14 — Multiple callbacks
+
+Two `@on_command` handlers registered for the same `control_id` — both fire in order.
+
+```python
+from wingui import WinGUI
+
+gui = WinGUI()
+hwnd = gui.create_window(440, 200, "Multiple Callbacks")
+log  = []
+
+gui.create_label (hwnd, 20, 20, 400, 22, "Two handlers are registered for button 1.")
+gui.create_button(hwnd, 165, 80, 110, 35, "Click", control_id=1)
+
+@gui.on_command(control_id=1)
+def handler_a(hwnd, ctrl_id, notif, ctrl_hwnd):
+    log.append("Handler A fired")
+
+@gui.on_command(control_id=1)
+def handler_b(hwnd, ctrl_id, notif, ctrl_hwnd):
+    log.append("Handler B fired")
+    gui.show_message_box("\n".join(log), "Event Log")
+
+gui.run_message_loop()
+```
+
+---
+
+### 15 — Notification filtering
+
+Handler fires **only** for `BN_CLICKED` (`notif=0`) — focus events are silently ignored.
+
+```python
+from wingui import WinGUI
+
+BN_CLICKED = 0
+
+gui  = WinGUI()
+hwnd = gui.create_window(440, 200, "Notification Filtering")
+
+gui.create_label (hwnd, 20, 20, 400, 44,
+                  "Handler fires ONLY for BN_CLICKED (notif=0).\n"
+                  "Other notification codes are silently ignored.")
+gui.create_button(hwnd, 160, 100, 120, 35, "Click Me", control_id=1)
+
+@gui.on_command(control_id=1, notif=BN_CLICKED)
+def on_clicked(hwnd, ctrl_id, notif, ctrl_hwnd):
+    gui.show_message_box(
+        f"Button clicked!\nctrl_id={ctrl_id}  notif={notif}",
+        "Filtered Handler"
+    )
+
+gui.run_message_loop()
+```
+
+---
+
+### 16 — Shared state
+
+Accumulate words from a textbox into a Python list across multiple button clicks.
+
+```python
+from wingui import WinGUI
+import ctypes
+
+_user32 = ctypes.WinDLL("user32")
+
+def read(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+gui     = WinGUI()
+hwnd    = gui.create_window(480, 220, "Shared State")
+history = []
+
+gui.create_label  (hwnd,  20,  20, 440, 22, "Type a word and press Add.")
+txt = gui.create_textbox(hwnd, 20,  50, 320, 28)
+gui.create_button (hwnd, 350,  48, 110, 30, "Add",          control_id=1)
+gui.create_button (hwnd, 165, 110, 150, 35, "Show History", control_id=2)
+
+@gui.on_command(control_id=1)
+def on_add(hwnd, ctrl_id, notif, ctrl_hwnd):
+    word = read(txt).strip()
+    if word:
+        history.append(word)
+        _user32.SetWindowTextW(txt, "")
+
+@gui.on_command(control_id=2)
+def on_show(hwnd, ctrl_id, notif, ctrl_hwnd):
+    if history:
+        gui.show_message_box(
+            "\n".join(f"{i+1}. {w}" for i, w in enumerate(history)),
+            f"History ({len(history)} item(s))"
+        )
+    else:
+        gui.show_message_box("No items added yet.", "History")
+
+gui.run_message_loop()
+```
+
+---
+
+### 17 — Programmatic close
+
+A Quit button calls `gui.close_window()` to exit the message loop cleanly.
+
+```python
+from wingui import WinGUI
+
+gui  = WinGUI()
+hwnd = gui.create_window(400, 180, "Programmatic Close")
+
+gui.create_label (hwnd, 20, 20, 360, 22, "Press Quit to close from code.")
+gui.create_button(hwnd, 150, 80, 100, 35, "Quit", control_id=1)
+
+@gui.on_command(control_id=1)
+def on_quit(hwnd, ctrl_id, notif, ctrl_hwnd):
+    gui.close_window(hwnd)
+
+gui.run_message_loop()
+```
+
+---
+
+### 18 — Raw `set_callback`
+
+Uses `gui.set_callback()` directly instead of `@on_command`. Every `WM_COMMAND` event routes to one function.
+
+```python
+from wingui import WinGUI
+
+gui  = WinGUI()
+hwnd = gui.create_window(440, 200, "Raw set_callback")
+
+gui.create_label (hwnd, 20, 20, 400, 22, "Uses gui.set_callback() directly.")
+gui.create_button(hwnd,  20, 80, 110, 35, "Button A", control_id=1)
+gui.create_button(hwnd, 155, 80, 110, 35, "Button B", control_id=2)
+gui.create_button(hwnd, 290, 80, 110, 35, "Button C", control_id=3)
+
+names = {1: "A", 2: "B", 3: "C"}
+
+def raw_handler(hwnd, ctrl_id, notif, ctrl_hwnd):
+    name = names.get(ctrl_id)
+    if name:
+        gui.show_message_box(f"Button {name} pressed\nctrl_id={ctrl_id}  notif={notif}",
+                             "Raw Callback")
+
+gui.set_callback(raw_handler)
+gui.run_message_loop()
+```
+
+---
+
+## Running the Example Gallery
+
+The `example.py` file contains all 22 examples with an interactive console menu.
+
+```bash
+# Via the package entry point
+python -m wingui --examples
+
+# Or directly
+python example.py
+```
+
+The launcher also provides:
+
+```bash
+python -m wingui            # Interactive quick-start menu
+python -m wingui --demo     # Run the Hello World demo directly
+python -m wingui --check    # Verify DLL is present and loadable
+python -m wingui --help     # Show help text
+```
+
+---
+
+## Diagnostics
+
+If controls fail to appear, run the diagnostic script before filing a bug:
+
+```bash
+python wingui/diag.py
+```
+
+`diag.py` patches all control-creation calls to print `GetLastError()` codes before Python raises `OSError`, prints `hInstance` values, and independently tests the `STATIC` window class from Python ctypes. Typical error codes:
+
+| Code | Hex | Meaning |
+|------|-----|---------|
+| 1400 | `0x00000578` | Invalid parent HWND — DLL and EXE handle mismatch. Rebuild the DLL. |
+| 1407 | `0x0000057F` | Cannot find window class — wrong `hInstance` in `RegisterClassExW`. Rebuild. |
+| 87   | `0x00000057` | Invalid parameter — stack layout or argument type mismatch. |
 
 ---
 
 ## Project Structure
 
 ```
-wingui/
-├── wingui32.asm      Assembly source (build this to produce the DLL)
-├── wingui.py         Python ctypes shim + WinGUI class + flat API
-├── __init__.py       Package init — re-exports the public API
-├── example.py        Interactive example gallery (22 demos)
+WinGUI/
+├── asm/
+│   ├── wingui32.asm        # NASM x86-64 source — all GUI logic
+│   └── wingui32.def        # DLL export list (for MSVC link)
+├── bin/
+│   ├── wingui32.dll        # Pre-built 64-bit DLL
+│   └── wingui32.obj        # Object file
+├── wingui/
+│   ├── wingui.py           # ctypes shim — WinGUI class + flat API
+│   ├── __init__.py         # Package init, re-exports public API
+│   ├── __main__.py         # python -m wingui entry point
+│   ├── diag.py             # Win32 diagnostic tool
+│   └── py.typed            # PEP 561 marker
+├── example.py              # 22-example interactive gallery
+├── build.bat               # One-command DLL rebuild (MSYS2)
+├── pyproject.toml
+├── LICENSE.txt             # GNU LGPL v3.0
 └── README.md
 ```
 
 ---
 
-## License
+## Build Reference
 
-LGPL v3+. See `LICENSE` for the full text.
+### `build.bat`
+
+```bat
+@echo off
+cd asm
+nasm -f win64 wingui32.asm -o wingui32.obj
+gcc  -shared -o ..\bin\wingui32.dll wingui32.obj ^
+     -luser32 -lkernel32 -lgdi32 -lcomctl32
+echo Done.
+```
+
+### Key assembly design decisions
+
+**`hInstance` via `GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, WindowProc)`**
+rather than `GetModuleHandleW(NULL)`. The `NULL` form returns the host EXE handle; `RegisterClassExW` must use the DLL's own handle so `CreateWindowExW` can locate the class.
+
+**`hInstance = NULL` for system controls** (`BUTTON`, `EDIT`, `STATIC`).
+Passing the DLL handle causes `ERROR_CANNOT_FIND_WND_CLASS (1407)` because these classes are registered against the null/system module.
+
+**`SetProcessDpiAwarenessContext` loaded via `GetProcAddress`** at runtime rather than a static import. Static imports of this symbol fail to load on Windows < 1703 where the function may not exist in `user32.dll`.
+
+**Controls created with `NULL` text, then text set via `SetWindowTextW`** after `CreateWindowExW` returns. This avoids the bug where calling `utf8_to_wchar` before `CreateWindowExW` corrupted the stack frame and caused `ERROR_INVALID_WINDOW_HANDLE (1400)`.
+
+**RSP alignment** strictly maintained throughout. On entry to any function, `RSP mod 16 = 8` (return address just pushed). Shadow space of 32 bytes is always reserved. Stack arguments start at `[rsp+32]`.
 
 ---
 
-## Author
+## License
 
-**Divyanshu Sinha** — divyanshu.sinha631@gmail.com
+Copyright © 2026 Divyanshu Sinha
+
+Licensed under the **GNU Lesser General Public License v3.0**.
+See [LICENSE.txt](LICENSE.txt) for the full text.
+
+In brief: you may use WinGUI in your own applications (commercial or open-source) without restriction. If you modify `wingui32.asm` or `wingui.py` themselves, you must release those modifications under LGPL v3+.
+
+---
+
+*Made with NASM, Python, and the Win32 API — no frameworks were harmed.*

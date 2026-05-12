@@ -1079,7 +1079,7 @@ Passing the DLL handle causes `ERROR_CANNOT_FIND_WND_CLASS (1407)` because these
 Copyright © 2026 Divyanshu Sinha
 
 Licensed under the **GNU Lesser General Public License v3.0**.
-See [LICENSE.txt](LICENSE.txt) for the full text.
+See [LICENSE.txt](https://github.com/DivyanshuSinha136/WinGUI?tab=LGPL-3.0-1-ov-file) for the full text.
 
 In brief: you may use WinGUI in your own applications (commercial or open-source) without restriction. If you modify `wingui32.asm` or `wingui.py` themselves, you must release those modifications under LGPL v3+.
 

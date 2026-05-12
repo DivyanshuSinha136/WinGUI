@@ -1,7 +1,13 @@
 """
+WinGUI — Native Win32 GUI framework
+Copyright (C) 2026 Divyanshu Sinha
+
+Licensed under GNU LGPL v3.0
+=============================
+
 examples.py — WinGUI Example Gallery
 =====================================
-Showcases every feature of the wingui wrapper.
+Showcases every feature of the wingui v3 wrapper.
 
 Run:
     python examples.py
@@ -9,7 +15,7 @@ Run:
 An interactive console menu lets you pick any example.
 Close the window to return to the menu.
 
-Requires wingui32.dll built from wingui32.asm:
+Requires wingui32.dll built from wingui32.asm v3.3:
     nasm -f win64 wingui32.asm -o wingui32.obj
     gcc  -shared -o wingui32.dll wingui32.obj -luser32 -lkernel32 -lgdi32 -lcomctl32
 """

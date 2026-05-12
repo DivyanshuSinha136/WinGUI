@@ -1,4 +1,4 @@
-# wingui
+# WinGUI
 
 **Native Win32 GUI for Python — zero middleware, zero dependencies.**
 
